@@ -8,6 +8,7 @@ from line import Line
 from neuralnetworkutil import *
 from number import Number
 from tracker import Tracker
+from videoutil import VideoUtil
 
 
 class Workspace(Frame):
@@ -95,14 +96,14 @@ class Workspace(Frame):
                 number.subtraction = True
                 print 'subtraction with %s' % number.prediction
                 print 'sum %d' % self.sum
-            self.render_number(binary_frame, number)
+            self.render_number(frame, number)
 
         # for number in self.numbers:
 
-        self.draw_frame_meta_data(binary_frame)
-        self.draw_sum(binary_frame)
+        self.draw_frame_meta_data(frame)
+        self.draw_sum(frame)
 
-        self.render_frame(binary_frame)
+        self.render_frame(frame)
         self.current_frame_index = self.current_frame_index + 1
         self.after(ApplicationWindow.frames_per_second, self.render)
 
@@ -232,12 +233,12 @@ class ApplicationWindow(Frame):
         self.pack(fill=BOTH, expand=True)
 
 
-train_and_persist()
-# model = load('conv-60-e')
-# frames = VideoUtil.load_frames('./resources/video-9.avi')
-# #
-# root = Tk()
-# window = ApplicationWindow(master=root)
-# window.mainloop()
-# window.destroy()
-# root.destroy()
+# train_and_persist()
+model = load('conv-60-e')
+frames = VideoUtil.load_frames('./resources/video-2.avi')
+#
+root = Tk()
+window = ApplicationWindow(master=root)
+window.mainloop()
+window.destroy()
+root.destroy()
