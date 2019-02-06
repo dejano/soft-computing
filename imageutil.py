@@ -33,11 +33,13 @@ class ImageUtil:
 
     @staticmethod
     def try_hard_1(frame):
-        lower = np.array([200, 200, 200])
-        upper = np.array([255, 255, 255])
-        binary = cv2.inRange(frame, lower, upper)
+        # lower = np.array([160, 160, 160])
+        # upper = np.array([255, 255, 255])
+        # binary = cv2.inRange(frame, lower, upper)
+        frame_gs = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+        tr, binary = cv2.threshold(frame_gs, 200, 255, cv2.THRESH_BINARY)
         binary = cv2.blur(binary, ksize=(2, 2))
-        binary = cv2.dilate(binary, (3, 3))
+        binary = cv2.dilate(binary, (3, 3), iterations=1)
         return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel=np.ones((2, 2), dtype=np.uint8), iterations=1)
 
     @staticmethod

@@ -2,14 +2,12 @@ import PIL.Image
 import PIL.ImageTk
 from Tkinter import *
 from scipy.spatial import distance
-from shapely.geometry import LineString
-from shapely.geometry import box
 
 from imageutil import *
 from line import Line
 from neuralnetworkutil import *
 from number import Number
-from videoutil import VideoUtil
+from tracker import Tracker
 
 
 class Workspace(Frame):
@@ -26,13 +24,12 @@ class Workspace(Frame):
         # Lines
         self.addition_line = Line(first_frame, LineMask.blue)
         self.subtraction_line = Line(first_frame, LineMask.green)
-        self.lines = []
-        self.lines.append(self.addition_line)
-        self.lines.append(self.subtraction_line)
         self.sum = 0
+        self.tracker = Tracker()
 
         self.numbers = []
         self.photo = None
+        # self.current_frame_index = 430
         self.current_frame_index = 0
         self.render()
 
@@ -40,83 +37,83 @@ class Workspace(Frame):
         if self.current_frame_index == len(frames):
             return
 
+        if not ApplicationWindow.playing:
+            self.after(ApplicationWindow.frames_per_second, self.render)
+            return
+
         original_frame = frames[self.current_frame_index]
         previous_frame = None if self.current_frame_index - 1 < 0 else frames[self.current_frame_index - 1]
         frame = np.copy(original_frame)
 
-        to_delete = []
         for num in self.numbers:
             if num.y2 > 477 or num.x2 >= 637:
-                to_delete.append(num)
-
-        for delete in to_delete:
-            self.numbers.remove(delete)
+                num.out_of_screen = True
 
         # Contours
         binary_frame = ImageUtil.to_binary(original_frame)
         contours, hierarchy = cv2.findContours(binary_frame, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        numbers = []
+        potential_overlap = []
         for i, contour in enumerate(contours):
             x, y, w, h = cv2.boundingRect(contour)
-            # todo add area as well
-            if 3 <= w <= 40 and h >= 10:
-                number = Number(contour, binary_frame)
-                # TODO 2
-                # Handle when intersection happens with line
-                # Something is wrong here, sometimes shape is (28, 27). Prolly related to todo 1
-                if number.image.shape != (28, 28):
-                    continue
 
-                closest = self.find_closest(number, self.numbers)
-                if closest is False:
-                    closest = number
-                    self.numbers.append(closest)
+            if not (3 <= w <= 40 and h >= 10):
+                # print 'NOT SUITABLE [%d %d]' % (w, h)
+                n = Number(contour, binary_frame, self.current_frame_index)
+                potential_overlap.append(n)
+                continue
 
-                closest.calculate(contour, binary_frame)
+            n = Number(contour, binary_frame, self.current_frame_index)
+            if n.image.shape != (28, 28):
+                continue
 
-                # Intersection
-                rectangle = box(number.x1, number.y1, number.x2, number.y2)
-                subtraction = LineString([(self.subtraction_line.a.x, self.subtraction_line.a.y),
-                                          (self.subtraction_line.b.x, self.subtraction_line.b.y)])
-                addition = LineString([(self.addition_line.a.x, self.addition_line.a.y),
-                                       (self.addition_line.b.x, self.addition_line.b.y)])
+            n.prediction = str(np.argmax(model.predict(n.prepare_for_neural_network(), verbose=0)))
+            numbers.append(n)
+        #
+        # potential_overlap = self.tracker.update_potential_overlap(potential_overlap, self.current_frame_index,
+        #                                                           self.addition_line,
+        #                                                           self.subtraction_line)
+        numbers = self.tracker.update(numbers, self.current_frame_index, self.addition_line, self.subtraction_line,
+                                      frame)
+        # print numbers
 
-                # # Prediction
-                # prediction = model.predict(number.prepare_for_neural_network(), verbose=0)
-                # predicted_number = str(np.argmax(prediction))
-                # # cv2.putText(frame, predicted_number, (cX - 25, cY - 15), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                # #             (0, 255, 255), 1)
+        for overlap in potential_overlap:
+            self.render_number(frame, overlap, (0, 255, 0))
 
-                prediction = model.predict(closest.prepare_for_neural_network(), verbose=0)
-                predicted_number = str(np.argmax(prediction))
-                cv2.putText(frame, predicted_number, (closest.center_x - 25, closest.center_y - 15),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1,
-                            (0, 255, 255), 1)
-                if rectangle.intersects(subtraction) and closest.used is False:
-                    self.sum = self.sum - int(predicted_number)
-                    closest.used = True
-                    print 'subtraction with %s' % predicted_number
+        for number in numbers:
 
-                if rectangle.intersects(addition) and closest.used is False:
-                    self.sum = self.sum + int(predicted_number)
-                    closest.used = True
-                    print 'addition with %s' % predicted_number
+            # print 'Predicted %s - %d' % (number.prediction, area)
 
-        for number in self.numbers:
-            self.render_number(frame, number)
+            if self.addition_line.intersects(number) and number.addition is False:
+                self.sum += int(number.prediction)
+                print number.addition
+                number.addition = True
+                print 'addition with %s' % number.prediction
+                print 'sum %d' % self.sum
+            if self.subtraction_line.intersects(number) and number.subtraction is False:
+                self.sum -= int(number.prediction)
+                number.subtraction = True
+                print 'subtraction with %s' % number.prediction
+                print 'sum %d' % self.sum
+            self.render_number(binary_frame, number)
 
-        self.draw_frame_meta_data(frame)
+        # for number in self.numbers:
 
-        self.draw_lines(frame)
+        self.draw_frame_meta_data(binary_frame)
+        self.draw_sum(binary_frame)
 
-        self.draw_sum(frame)
-
-        self.render_frame(frame)
+        self.render_frame(binary_frame)
         self.current_frame_index = self.current_frame_index + 1
-        self.after(25, self.render)
+        self.after(ApplicationWindow.frames_per_second, self.render)
 
-    def render_number(self, frame, number):
+    def render_number(self, frame, number, color=(255, 0, 0)):
+        if number.out_of_screen:
+            pass
         # cv2.circle(frame, (cX, cY), 14, (255, 0, 0), 1)
-        cv2.rectangle(frame, (number.x1, number.y1), (number.x2, number.y2), (0, 255, 0), 1)
+        cv2.putText(frame, number.prediction, (number.center_x - 25, number.center_y - 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1,
+                    (255, 255, 255), 1)
+        cv2.rectangle(frame, (number.x1, number.y1), (number.x2, number.y2), color, 1)
 
     def draw_frame_meta_data(self, frame):
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -126,7 +123,8 @@ class Workspace(Frame):
         line_type = 1
         # fps = 40
         number_of_frames = len(frames)
-        cv2.putText(frame, "{}/{}".format(self.current_frame_index + 1, number_of_frames),
+        cv2.putText(frame, "{}/{} {}fps".format(self.current_frame_index + 1, number_of_frames,
+                                                ApplicationWindow.frames_per_second),
                     bottom_left_corner_of_text,
                     font,
                     font_scale,
@@ -138,7 +136,7 @@ class Workspace(Frame):
         right_top_corner = (600, 50)
         font_scale = 1
         font_color = (255, 50, 255)
-        line_type = 1
+        line_type = 2
         # fps = 40
         number_of_frames = len(frames)
         cv2.putText(frame, "%d" % self.sum,
@@ -147,13 +145,6 @@ class Workspace(Frame):
                     font_scale,
                     font_color,
                     line_type)
-
-    def draw_lines(self, frame):
-        pass
-        # draw lines
-        # for line in self.lines:
-        #     x1, y1, x2, y2 = line
-        #     cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
 
     def render_frame(self, frame):
         self.photo = PIL.ImageTk.PhotoImage(image=PIL.Image.fromarray(frame))
@@ -173,6 +164,21 @@ class Workspace(Frame):
             numbers_with_distance[n] = distance.euclidean([number.center_x, number.center_y], [n.center_x, n.center_y])
         closest_number = min(numbers_with_distance.iterkeys(), key=(lambda key: numbers_with_distance[key]))
         if numbers_with_distance[closest_number] > 40:
+            # if (closest_number.addition or closest_number.subtraction) and (
+            #         numbers_with_distance[closest_number] > 5 or numbers_with_distance[closest_number] < 20):
+            #     return closest_number
+            return False
+        return closest_number
+
+    def first_time_shown(self, number, numbers):
+        if len(numbers) == 0:
+            return True
+
+        numbers_with_distance = {}
+        for n in numbers:
+            numbers_with_distance[n] = distance.euclidean([number.center_x, number.center_y], [n.center_x, n.center_y])
+        closest_number = min(numbers_with_distance.iterkeys(), key=(lambda key: numbers_with_distance[key]))
+        if numbers_with_distance[closest_number] > 40:
             return False
         return closest_number
 
@@ -183,22 +189,31 @@ class Menu(Frame):
         Frame.__init__(self, master)
         self.grid_columnconfigure(0, weight=1)
 
-        self.first = Button(self, text="Grayscale", command=self.gray_scale)
+        self.first = Button(self, text=">>", command=self.speed_up)
         self.first.grid(row=0, column=0, sticky=W + E, padx=20, pady=5)
 
-        self.second = Button(self, text="second", command=self.command)
+        self.second = Button(self, text="<<", command=self.slow_down)
         self.second.grid(row=1, column=0, sticky=W + E, padx=20, pady=5)
+
+        self.toggle_play_button = Button(self, text="toggle", command=self.toggle_play)
+        self.toggle_play_button.grid(row=2, column=0, sticky=W + E, padx=20, pady=5)
 
         self.grid(row=0, column=0, rowspan=4, sticky=N + W + E + S)
 
-    def command(self):
-        print "do command"
+    def slow_down(self):
+        ApplicationWindow.frames_per_second = ApplicationWindow.frames_per_second + 50
 
-    def gray_scale(self):
-        print "asd"
+    def toggle_play(self):
+        ApplicationWindow.playing = not ApplicationWindow.playing
+
+    def speed_up(self):
+        ApplicationWindow.frames_per_second = ApplicationWindow.frames_per_second - 50
 
 
 class ApplicationWindow(Frame):
+    frames_per_second = 25
+    playing = True
+
     def __init__(self, master=None):
         Frame.__init__(self, master)
         self["bg"] = "yellow"
@@ -217,12 +232,12 @@ class ApplicationWindow(Frame):
         self.pack(fill=BOTH, expand=True)
 
 
-# train_and_persist()
-model = load()
-frames = VideoUtil.load_frames('./resources/video-0.avi')
-#
-root = Tk()
-window = ApplicationWindow(master=root)
-window.mainloop()
+train_and_persist()
+# model = load('conv-60-e')
+# frames = VideoUtil.load_frames('./resources/video-9.avi')
+# #
+# root = Tk()
+# window = ApplicationWindow(master=root)
+# window.mainloop()
 # window.destroy()
 # root.destroy()

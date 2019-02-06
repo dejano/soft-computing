@@ -1,0 +1,12 @@
+RA 142/2011 Dejan Osmanovic
+file	sum
+video-0.avi	-22
+video-1.avi	-20
+video-2.avi	7
+video-3.avi	-68
+video-4.avi	-36
+video-5.avi	-1
+video-6.avi	-70
+video-7.avi	17
+video-8.avi	-3
+video-9.avi	19

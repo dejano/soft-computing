@@ -1,15 +1,16 @@
 import cv2
 import numpy as np
+from shapely.geometry import LineString
 
-from point import Point
+from intersectionutil import pnt2line
 
 
 class LineType:
     def __init__(self):
         pass
 
-    green = {"operation": "+", "lower": np.array([55, 150, 100]), "upper": np.array([70, 255, 255])}
-    blue = {"operation": "-", "lower": np.array([100, 150, 100]), "upper": np.array([140, 255, 255])}
+    green = {"operation": "-", "lower": np.array([55, 150, 100]), "upper": np.array([70, 255, 255])}
+    blue = {"operation": "+", "lower": np.array([100, 150, 100]), "upper": np.array([140, 255, 255])}
 
 
 class Line:
@@ -21,7 +22,10 @@ class Line:
         if lines is None or len(lines) == 0:
             raise ValueError('Unable to locate lines')
 
+        self.x1, self.y1, self.x2, self.y2 = np.min(lines, axis=0)[0]
+        self.line_string = LineString([(self.x1, self.y1), (self.x2, self.y2)])
         self.operation = line_type.get("operation")
-        x1, y1, x2, y2 = np.min(lines, axis=0)[0]
-        self.a = Point(x1, y1)
-        self.b = Point(x2, y2)
+
+    def intersects(self, number):
+        dist, r = pnt2line([number.center_x, number.center_y], [self.x1, self.y1], [self.x2, self.y2])
+        return r > 0 and dist < 9
